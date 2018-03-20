@@ -1,0 +1,235 @@
+---
+title: "Decision Trees for Spam Detection"
+author: "Malte Schierholz"
+date: "20 Mar 2018"
+output: html_document
+---
+
+## Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# library("ggplot2")
+library("rpart")
+library("partykit")
+library("verification")
+
+set.seed(353)
+```
+
+## Data
+
+"Email spam data. 4601 email messages sent to "George" at HP-Labs.
+
+He labeled 1813 of these as spam, with the remainder being good email (ham).
+ The goal is to build a customized spam filter for George.
+
+The feature set tracks 57 of the most commonly used, non-trivial words in the corpus, using a bag-of-words model.
+ Recorded for each email message is the relative frequency [%] of each of these words and tokens. 
+ Included as well are three different recordings of capitalized letters.
+
+These are a publicly available database, available from the UC Irvine data repository:
+archive.ics.uci.edu/ml/datasets/Spambase More details about the data can be found there.
+
+Our data matrix has 59 columns:
+
+* *spam* Logical variable, TRUE is spam, FALSE is ham (good email).
+
+* *testid* Logical variable. An optional split into train (FALSE) and test (TRUE) data (as used in, for example "Elements of Statistical Learning"). 
+
+* The remainder of the columns are features used to build a prediction model."
+
+(Data description copied from https://web.stanford.edu/~hastie/CASI/data.html)
+
+## Load data
+
+Load data and prepare for analysis
+```{r}
+spam <- read.csv("SPAM.csv")
+names(spam)[51:56] <- c("ch;","ch(","ch[","ch!","ch$","ch#")  
+spam$spam <- as.factor(as.numeric(spam$spam))
+head(spam)                                    #email features, indicates frequency of different characters/words
+```
+
+Split into training and test data and remove the splitting variable testid
+```{r}
+spam_train <- spam[spam$testid == FALSE, -2]
+spam_test <- spam[spam$testid == TRUE, -2]
+```
+
+## Grow tree
+
+The task is to predict if an email is spam using all covariates in the dataset.
+
+Build "class"ification tree with default parameters
+```{r}
+rp <- rpart(spam ~ .,          # "spam" is dependent variable, predicted by all others "(~ .)".
+            data = spam_train, # data: use training data spam_train
+            method = "class")  # method: build classification tree for binary outcome
+```
+
+Save the tree "rp" (of object class "rpart") as "party_rp" (of object type "party") 
+and plot it
+```{r}
+party_rp <- as.party(rp)                                    # transform object, so that plots look nicer
+plot(party_rp)                                              # if frequency of  $ <0.056, then go to left, otherwise to right...
+```
+
+Build a small tree using custom parameters
+```{r}
+rp <- rpart(spam ~ ., 
+            data = spam_train, # same data
+            method = "class", # classification tree for categorical outcomes
+            control = rpart.control(minsplit = 100, # minimal number of observations in a node to try splitting
+                                    minbucket = 100, # minimal number of observations in any terminal leaf node
+                                    cp = 0.01, # minimal improvement trough splitting
+                                    maxdepth = 3 # maximum tree depth (root node has depth 0)
+                                    ))
+```
+
+Transform and plot again
+```{r}
+party_rp <- as.party(rp)
+plot(party_rp)    # if people dont use "$" and "remove", then most likely no spam email
+```
+
+## Find optimal predictive tree with cost-complexity pruning
+
+Build a very large tree first, then decrease size to find optimal tree
+```{r}
+rp <- rpart(spam ~ ., 
+            data = spam_train, 
+            method = "class",
+            control = rpart.control(minsplit = 10, # minimal number of observations in a node to try splitting
+                                    minbucket = 3, # minimal number of observations in any terminal leaf node
+                                    cp = 0.001, # minimal improvement trough splitting
+                                    maxdepth = 30 # maximum tree depth (root node has depth 0)
+                                    ))
+```
+
+Transform and plot again
+```{r}
+party_rp <- as.party(rp)
+plot(party_rp)
+```
+
+This tree overfits the data. Training error (rel error) decreases as the tree grows larger, but this does not generalize to new data for large trees. Cross-validated test error (xerror) remains rather constant for all trees with more than 10 splits.
+
+```{r}
+printcp(rp)     #splits data into 2 different data sets, gives relative error vs. cross validation error (how good are predictions on test data set)
+```
+
+Depending on parameter CP (how much did we improve?), both the training error and the test error improve, yet test error doesn't improve further than 0.2
+
+This also evident from graph: the first few splits improve the test error, later improvements are negligible
+```{r}
+plotcp(rp)
+```
+
+Select the tree with CP = 0.0049261 and 10 splits since test error is close to optimal and overfitting is small for this tree.
+
+Another rule of thumb would be to choose the lowest level where the rel_error + xstd < xerror
+
+```{r}
+p_tree <- prune(rp, cp = 0.0049261) #pick optimal cp value and prune tree back
+```
+
+Transform tree
+```{r}
+party_p_tree <- as.party(p_tree)
+```
+
+```{r}
+party_p_tree       # print tree to console
+plot(party_p_tree) # plot tree
+```
+
+## Prediction
+
+Use the pruned tree to predict if emails from the test set are spam or not. 
+
+```{r}
+predicted_y_tree <- predict(party_p_tree, newdata = spam_test)
+```
+
+Calculate a confusion matrix (= a contingency table of true values vs. predictions)
+```{r}
+table(predicted = predicted_y_tree, true = spam_test$spam) # values on the diagonal are correctly predicted
+```
+
+Two ways to calculate the accuracy
+```{r}
+(890 + 500)/(890 + 500 + 95 + 51)
+mean(predicted_y_tree == spam_test$spam)
+```
+
+Maybe we like to predict probabilities that an email is spam?
+
+```{r}
+predicted_y_tree2 <- predict(party_p_tree, newdata = spam_test, type = "prob")[,2]
+```
+
+Here are a few measures that let us evaluate probabilistic predictions (as oposed to 0-1 predictions above).
+```{r}
+A <- verify(pred = predicted_y_tree2, obs = as.numeric(as.character(spam_test$spam)), frcst.type = "prob", obs.type = "binary" )
+summary(A)
+```
+
+There exist many performance measures to evaluate predictions. See also the R-package ROCR. 
+
+## Include missclassification costs and priors (only for binary outcomes)
+
+Remember the small tree that was built earlier?
+```{r}
+rp <- rpart(spam ~ ., data = spam_train, model = TRUE, method = "class",
+            control = rpart.control(minsplit = 100, # minimal number of observations in a node to try splitting
+                                    minbucket = 100, # minimal number of observations in any terminal leaf node
+                                    cp = 0.01, # minimal improvement trough splitting
+                                    maxdepth = 3 # maximum tree depth (root node has depth 0)
+                                    ))
+party_rp <- as.party(rp)
+plot(party_rp)                  #different results since costs are not included
+```
+
+What is wrong with this tree?
+
+The costs of misclassifiation are often not symmetric. On the one hand, if one deletes an email that *falsely* is predicted to be spam, one may miss an important email. High costs! On the other hand, it doesn't matter much if some spam emails are not detected. A loss matrix defines such costs (defaults to 1 if misclassified).
+
+Priors can be used to correct for non-representative training samples. It default to relative frequencies in the training data
+
+```{r}
+rp <- rpart(spam ~ ., data = spam_train, model = TRUE, method = "class",
+            parms = list(prior = c(0.5, 0.5), # fictive numbers stating that both spam and ham are expected with probability 0.5 in new data (observed proportions: 0.6/0.4)
+                         loss = matrix(c(0, 5, # loss function: costs for ham falsely classified as spam = 5
+                                         1, 0), # costs for spam falsely classified as ham = 1, if e-mails correctly predicted, cost=0
+                                       byrow = TRUE, nrow = 2)
+            ),
+            control = rpart.control(minsplit = 100, # minimal number of observations in a node to try splitting
+                                    minbucket = 100, # minimal number of observations in any terminal leaf node
+                                    cp = 0.01, # minimal improvement trough splitting
+                                    maxdepth = 3 # maximum tree depth (root node has depth 0)
+                                    ))
+party_rp <- as.party(rp)
+plot(party_rp)
+```
+
+Although the majority of emails in Node 6 is spam, we may not want to classify all of it as spam. Costs are lower if our spam classifier labels them as ham.
+
+
+## Missing values
+
+Decision Trees have their own methods to handle missing data. RPART allows for *surrogate variables*, hereby exploiting correlations between predictors. This means, 
+
+* Missing values are ignored when searching for the next best splitting point. 
+* Once a split is found, surrogate splits are created that ideally should have the same outcome as the original split.
+* If the spliting variable from some node is missing, observations are passed to child nodes based on the surrogate variables.
+
+Despite missingness, the observations can thus still be used in the tree building process.
+
+## References
+
+* Refer to https://cran.r-project.org/web/packages/rpart/vignettes/longintro.pdf for a complete description of rpart
+* rpart is a standard tree implementation, but partykit is more flexible and variable selection is not biased. See https://cran.r-project.org/package=partykit (covered later)
+

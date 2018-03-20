@@ -1,0 +1,144 @@
+---
+title: "Random Forests and Boosting Exercise"
+author: "Christoph Kern"
+date: "19 March 2018"
+output:
+  html_document: default
+  html_notebook: default
+---
+
+## Setup
+
+```{r results='hide', message=FALSE, warning=FALSE}
+library(caret)
+library(randomForest)
+library(xgboost)
+```
+
+## Data
+
+For this exercise we again use the drug consumption data. Follow the link for information on the variables that are included.
+
+Source: https://archive.ics.uci.edu/ml/datasets/Drug+consumption+%28quantified%29
+
+```{r}
+drugs <- read.csv("drug_consumption.data", header = FALSE)
+names(drugs) <- c("ID", "Age", "Gender", "Education", "Country", "Ethnicity", "Neuroticism", "Extraversion", "Openness", "Agreeableness", "Conscientiousness", "Impulsive", "SS", "Alcohol", "Amphet", "Amyl", "Benzos", "Caff", "Cannabis", "Choc", "Coke", "Crack", "Ecstasy", "Heroin", "Ketamine", "Legalh", "LSD", "Meth", "Mushrooms", "Nicotine", "Semer", "VSA")
+drugs$Age <- as.factor(drugs$Age)
+drugs$Gender  <- as.factor(drugs$Gender)
+drugs$Education  <- as.factor(drugs$Education)
+drugs$Country <- as.factor(drugs$Country)
+drugs$Ethnicity <- as.factor(drugs$Ethnicity)
+head(drugs)
+```
+
+Here you can prepare your own outcome variable. For this you can choose from the variables on drug consumption and pick one drug (or a combination of drugs) as the prediction objective. The resulting variable should be of class `factor`, but it can have more than two categories if needed.
+
+```{r}
+
+
+
+```
+
+Then we split the data into a training and a test part. We again use `createDataPartition` from `caret` in order to sample within the levels of your new outcome variable when splitting the data.
+
+```{r}
+set.seed(456)
+
+#inTrain <- createDataPartition(..., 
+#                               p = .8, 
+#                               list = FALSE, 
+#                               times = 1)
+
+drugs_train <- drugs[inTrain,]
+drugs_test <- drugs[-inTrain,]
+```
+
+## ML models
+
+### Random Forest
+
+Again, we first specify our evaluation method for the `train` function of `caret`. In the following, we may use 5-Fold Cross-Validation, but you can of course modify this piece.
+
+```{r}
+ctrl  <- trainControl(method = "cv",
+                      number = 5)
+```
+
+Next, a grid object can be specified to set our try-out values for tuning. Since we want to begin with random forests, we have to specify some reasonable values for `mtry`.
+
+```{r}
+
+
+
+```
+
+Now we can use `train` from `caret` in order to grow the forest. Use your new outcome variable to specify the model and add the objects from the previous chunks to control the tuning process.
+
+```{r}
+
+
+
+```
+
+Here we can add some code for inspecting the random forest results.
+
+```{r}
+
+
+
+```
+
+### Boosting
+
+We may want to use Boosting as an additional prediction method. Again, it is useful to specify a tuning grid first.
+
+```{r}
+
+
+
+```
+ 
+Now we can pass this grid to `train`, using `xgbTree` as the machine learning method. Many arguments can be copied from the previous call to `train`.
+
+```{r}
+
+
+
+```
+
+Again, take a look at the results from the tuning process, e.g. by printing and/or plotting the corresponding object.
+
+```{r}
+
+
+
+```
+
+### Additional method
+
+Here you can add an additional ML method if you want to...
+
+```{r}
+
+
+
+```
+
+## Prediction
+
+Finally, we can use `predict` in order to predict class membership in the test set based on the results from our classifiers.
+
+```{r}
+
+
+
+```
+
+Given predicted class membership, we can use `confusionMatrix` for evaluating prediction performance.
+
+```{r}
+
+
+
+```

@@ -1,0 +1,127 @@
+---
+title: 'Decision Trees: Exercise'
+output: html_document
+---
+
+This notebook walks you through the exercise for the decision tree session. We will compare how good Carts and model-based recursive partitioning predict the median house value in Boston.
+
+## Setup
+
+We will need the following packages.
+```{r}
+library(mlbench)
+library(rpart)
+library(partykit)
+```
+
+## Load Data
+
+we will use the Boston Housing data set again. “This dataset contains information collected by the U.S Census Service concerning housing in the area of Boston Mass. It was obtained from the StatLib archive (http://lib.stat.cmu.edu/datasets/boston), and has been used extensively throughout the literature to benchmark algorithms.”
+
+Source: https://www.cs.toronto.edu/~delve/data/boston/bostonDetail.html
+
+Load the data and remove three variables from the dataset that we will not use.
+```{r}
+data(BostonHousing2)
+BostonHousing2$town <- NULL
+BostonHousing2$tract  <- NULL
+BostonHousing2$cmedv  <- NULL
+```
+
+Like we did earlier, we split the data into training and test data (exactly identical split)
+```{r}
+set.seed(7345)
+train <- sample(1:nrow(BostonHousing2), 0.8*nrow(BostonHousing2))
+boston_train <- BostonHousing2[train,]
+boston_test <- BostonHousing2[-train,]
+``` 
+
+Now we have the data loaded. Let the tree growing start.
+
+## Tree growing with CART / rpart
+
+### Tree growing
+
+Use the `rpart` function is to grow a regression tree. Build a decision tree to predict `medv`, the median value of owner-occupied homes in $1000’s. You can use all other variables that are in this dataset (formula: `outcome ~ .`). Don't use `method = "class"` (this would be appropriate for categorical outcome), but use `method = "anova"` to build a regression tree (continuous outcome).
+
+Use training data only.
+```{r}
+
+```
+
+Now convert the tree into a format that is used by the party-package (`as.party` may be helpful) and plot the tree.
+```{r}
+
+```
+
+Did you make sure to grow a large tree? The larger the tree grows the better it will fit the training data. Build a tree that has at least 35 terminal nodes. Try parameters `minsplit = 10`, `minbucket = 3`, `cp = 0.001`, and `maxdepth = 30`.
+```{r}
+
+```
+
+### Pruning
+
+A large tree will probably overfit on test data. We should prune our tree back to a reasonable size. Find an appropriate `cp` value for the best subtree. The commands `printcp` and/or `plotcp` may help.
+```{r}
+
+```
+
+Now prune the tree with the selected `cp` value.
+```{r}
+
+```
+
+Convert the pruned tree with `as.party` and plot it 
+```{r}
+
+```
+
+### Making predictions
+
+Use the pruned tree to make predictions (function `predict`). We should use test data `boston_test`, so that we don't evaluate on data that was already used for training.
+```{r}
+
+```
+
+When we used linear models with regularization (lasso, ridge, elastic net) in an earlier session, we got the following performance (Mean Squared Error).
+```
+mean((p_null - boston_test$medv)^2) # 55.41185
+mean((p_ridge - boston_test$medv)^2) # 21.51213
+mean((p_lasso - boston_test$medv)^2) # 21.50103
+mean((p_net - boston_test$medv)^2) # 21.49059
+```
+
+What is the mean squared error from our pruned regression tree that was built above?
+```{r}
+
+```
+
+## Model-based recursive partitioning
+
+Now use the function `lmtree` to grow a tree. Predict the variable `medv` again. Use constant leaves and include all variables as partitioning variables.
+```{r}
+
+```
+
+Plot the tree
+```{r}
+
+```
+
+Make predictions on the test data
+```{r}
+
+```
+
+Calculate the mean squared error
+```{r}
+
+```
+
+How good are the predictions when compared with rpart and regression modeling? 
+
+You may want to try growing larger trees (increase `alpha`). Prune large trees back using the `AIC` criterion.
+```{r}
+
+```
+

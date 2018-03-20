@@ -1,0 +1,256 @@
+---
+title: "Model-based recursive Partitioning"
+author: "Malte Schierholz"
+date: "20 Mar 2018"
+output: html_document
+---
+
+## Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library("partykit")
+library("Formula")
+
+library("vcd") # for visualization
+library("sandwich") # to demonstrate parameter instability test
+```
+
+## Data
+
+Journal prices have received some interest in the economic literature (see http://econ.ucsb.edu/~tedb/Journals/jpricing.html)
+
+In the following I replicate in large parts an analysis from Zeileis, Hothorn and Hornik (2008) (see https://cran.r-project.org/web/packages/partykit/vignettes/mob.pdf)
+
+* Unit of Observation: 180 economic journals
+* Dependent variable: Demand = log(number of US library subscriptions)
+
+```{r}
+data("Journals", package = "AER")
+Journals <- transform(Journals, age = 2000 - foundingyear, chars = charpp * pages)
+head(Journals)
+```
+
+## Estimate trees
+
+Estimate a regression tree
+```{r}
+tree1 <- lmtree(log(subs) ~ 1 | price + citations + age + chars + society, data = Journals)
+plot(tree1)
+```
+
+Price and citations are relevant in this tree.
+
+A good regression model is already known to be: $\log \text{subscriptions} = \beta_0 + \beta_1 \log \frac{\text{price}}{\text{citations}} + \epsilon$ (OLS model from Stock and Watson)
+
+Though, the authors who developed this regression model also suspect that age, number of characters, and its interactions with price and citations may improve the model.
+
+We have three types of variables:
+
+* response variable ($\log \text{subscriptions}$, based on economic knowledge)
+* predictor variables ($\log \frac{\text{price}}{\text{citations}}$, based on economic knowledge)
+* partitioning variables (relationship unclear)
+
+Do the parameters $\beta_0$ and $\beta_1$ depend on the partitioning variables?
+
+```{r}
+tree2 <- lmtree(log(subs) ~ log(price/citations) | price + citations + age + chars + society, data = Journals)
+plot(tree2)
+```
+
+For young journals the price elasticity ($\beta_1$) is $-0.4$ and for older journals it is $-0.6$. The model does not depend on any partitioning variables other than age.
+
+## What is happening?
+
+Build the same tree again with option verbose = TRUE to see information about the fitting process
+
+```{r}
+tree2 <- lmtree(log(subs) ~ log(price/citations) | price + citations + age + chars + society, data = Journals, verbose = TRUE)
+# an alternative to verbose = TRUE
+# library(strucchange) ## just for sctest
+# sctest(tree2, node = 1)
+```
+
+Tree growing proceeds in three iterated steps:
+
+1. A model $\log \text{subscriptions} = \beta_0 + \beta_1 \log \frac{\text{price}}{\text{citations}} + \epsilon$ was fitted on the complete dataset.
+2. Parameter instability tests are then performed to test the null hypothesis if $\beta_0$ and $\beta_1$ are constant over the partitioning variable $Z_1$. This is repeated for every variable $Z_j$. (see below for details)
+3. Since age has minimal p.value, the next split will be on age. An exhaustive search over all possible thresholds in age is performed. For each possible splitting point, two models are estimated, the residual sums of squares from both models are summed up, and the splitting point having the smallest residual sum of squares is selected. We split on age $\leq 18$.
+
+Residual sum of squares is the criterion in lmtree, but other objective functions are used for other models with non-metric outcomes.
+
+The same procedure is repeated within each child node, but no significant parameter instabilities (significance level $\alpha < 0.05$) are found. The tree building process stops.
+
+## Get more information about the models at each node
+
+We can extract any node from the tree
+```{r}
+tree2[3] # node No. 3
+```
+
+Or get information about just a single node
+```{r}
+print(tree2, node = 3)
+```
+
+Model summary at nodes 1 to 3
+```{r}
+summary(tree2, node = 1:3) 
+```
+
+Model coefficients at nodes 2 and 3
+```{r}
+coef(tree2, node = c(2, 3)) 
+```
+
+Extract log-Likehood and Information Criteria
+```{r}
+logLik(tree2)
+AIC(tree2)
+BIC(tree2)
+```
+
+## How to make predictions?
+
+We can either predict the leaf of the tree or the final response
+
+```{r}
+(J_new <- head(Journals, 5)) # select first five entries from dataset
+predict(tree2, newdata = J_new, type = "node")
+predict(tree2, newdata = J_new, type = "response")
+```
+
+## How to control overfitting?
+
+Overfitting can be controlled with
+
+* alpha (default significance level = 0.05), 
+* minsize, or
+* maxdepth. 
+
+For large sample sizes, p-values will always be small. One may need to decrease alpha or use post-pruning (based on AIC or BIC, or ...).
+
+Our sample is with 180 journals quite small. Though not recommended, We incresase for the purpose of demonstration $\alpha$ in the following so that the tree grows larger (and might overfit the data).
+
+```{r}
+tree3 <- lmtree(log(subs) ~ log(price/citations) | price + citations + age + chars + society, 
+                data = Journals,
+                alpha = 0.85, # default significance level = 0.05
+                minsize = NULL, # default: min. (10*no. of parameters) observations per node
+                maxdepth = Inf # default: Infinity
+                )
+plot(tree3)
+```
+
+Lets have a look at the AIC from both trees.
+```{r}
+AIC(tree2)
+AIC(tree3)
+```
+The tree with two leaves we grew earlier has smaller AIC and should thus be preferred, according to the AIC criterion.
+
+We can select the better tree automatically. We now set the option prune = "AIC". This means we build the full tree as above, but then we prune back the tree to the subtree having the smallest AIC.
+```{r}
+tree4 <- lmtree(log(subs) ~ log(price/citations) | price + citations + age + chars + society, 
+                data = Journals,
+                alpha = 0.85, # default significance level = 0.05
+                minsize = NULL, # default: min. (10*no. of parameters) observations per node
+                maxdepth = Inf, # default: Infinity
+                prune = "AIC" # post-pruning based on AIC-criterion
+                )
+plot(tree4)
+```
+
+The result is the same as tree2.
+
+Note that we used cross-validation in rpart for pruning and selecting the optimal subtree. Cross-validation is computationally expensive.
+
+Here we used a different criterion, the AIC, to find an optimal subtree. The AIC is an analytical formla. It is appropriate to choose between competing linear models, but I am not sure about theory that would justify its usage in context of trees.
+
+## What if the leaf model is not least squares regression?
+
+Least-squares regression, logistic regression, and poisson regression regression all belong to the class of generalized linear models.
+
+All these models can be fitted using glmtree, for example logistic regression:
+
+```{r}
+data("PimaIndiansDiabetes", package = "mlbench") # load data
+
+pid_tree1 <- glmtree(diabetes ~ glucose | pregnant + pressure + triceps + insulin + mass + pedigree + age,
+                     data = PimaIndiansDiabetes, 
+                     family = binomial(link = "logit"), # model type: logistic regression
+                     alpha = 0.05, # default significance level = 0.05
+                     minsize = NULL, # default: min. (10*no. of parameters) observations per node
+                     maxdepth = Inf) 
+
+plot(pid_tree1)
+```
+
+Classification tree with constant nodes and maxdepth = 3
+
+```{r}
+pid_tree2 <- glmtree(diabetes ~ 1 | glucose + pregnant + pressure + triceps + insulin + mass + pedigree + age,
+                     data = PimaIndiansDiabetes, 
+                     family = binomial(link = "logit"), # model type: logistic regression
+                     alpha = 0.05, # default significance level = 0.05
+                     minsize = NULL, # default: min. (10*no. of parameters) observations per node
+                     maxdepth = 3) 
+
+plot(pid_tree2)
+```
+
+Advanced users can also implement their own model within this framework, if not available yet.
+
+## What about missing values?
+
+Model-based recursive partitioning (lmtree/glmtree) has no provisions for missing values. Observations with missing values are removed as a default.
+
+Conditional inference trees (function ctree, also in the package partykit) might be an alternative if the leaves are constant. They support surrogate variables (like in rpart), but also have statistical tests implemented to choose variables to split on (like they were used above in lmtree and glmtree).
+
+However, ctree employs a different type of tests. Unlike lmtree/glmtree, those tests are not invariant against monotone transformations of the partition variables. The following trees are therefore not identical.
+
+```{r}
+ctree1 <- ctree(log(subs) ~ price + citations + age + chars + society, data = Journals) 
+ctree2 <- ctree(log(subs) ~ log(price) + citations + age + chars + society, data = Journals) 
+```
+
+## Advanced: More about parameter instability tests
+
+How do parameter instability tests detect if $\beta$ is constant over a partitioning variable $Z_j$?
+
+Generalized M-fluctuation tests are employed for model-based recursive partitioning. Those tests have high power in situations where $\theta$ changes abruptly (breakpoints).
+
+The calculated p-values are then Bonferroni-adjusted to account for multiple testing of several partitioning variables. This means under the null hypothesis that $\beta = constant$ over all partitioning variables (no partition should be made), the probability to erroneously choose one variable for splitting is controlled by the significance level $\alpha$.
+
+The theory of M-fluctuation tests is rather complicated and we only provide some intuition here. In its simplest form, it tests if the residuals from the proposed model are independent of all partitioning variables in $Z$.
+
+Consider the a model $y = \beta_0 + \beta_1 x + \epsilon$. If optimized by least squares, the objective function is $\Psi(y, x, \beta_0, \beta_1) = (y - (\beta_0 + \beta_1 x))^2$
+
+Its partial derivations are 
+
+$\epsilon_i := \frac{d \Psi(y_i, x_i, \beta_0, \beta_1)}{d \beta_0} = -2 (y_i - (\beta_0 + \beta_1 x_i))$ (residuals)
+
+and 
+
+$x_i * \epsilon_i := \frac{d \Psi(y_i, x_i, \beta_0, \beta_1)}{d \beta_1} = -2 x_i (y_i - (\beta_0 + \beta_1 x))$
+
+The test statistics is based on both/all partial derivatives of $\Psi$ and tests the null hypothesis $H_0: \beta_i = constant$ for all individuals i.
+
+One can also plot the partial derivatives against each partitioning variable. For example, if one plots $\epsilon_i$ and $x_i * \epsilon_i$ against age, we have
+```{r}
+m1 <- lm(log(subs) ~ log(price/citations), data = Journals)
+
+plot(Journals$age, estfun(m1)[, 1], ylab = expression(epsilon[i]))
+plot(Journals$age, estfun(m1)[, 2], ylab = expression(x[i] * epsilon[i]))
+```
+
+If the null hypothesis were true, one would expect that $\epsilon_i$ and $x_i * \epsilon_i$ are scattered unsystematically around $0$. However,  the residuals $\epsilon_i$ and $x_i * \epsilon_i$ are often smaller than $0$ for small values of age. The parameter instability test detects this and rejects the null hypothesis that $\beta = constant$ for all ages. This suggests that two models, one for small ages, and another one for high ages, might be an more appropriate model. Thus, $age \leq 18$ was the selected split point in $tree2$.
+
+See Zeileis and Hornik (2007) for details about parameter instability tests and Seibold, Zeileis and Hothorn (2016) for a similar illustration using partial derivatives.
+
+## References
+
+More information about the partykit-package: https://cran.r-project.org/web/packages/partykit/
+Introduction to model-based recursive partitioning: https://cran.r-project.org/web/packages/partykit/vignettes/mob.pdf 
